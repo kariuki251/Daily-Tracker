@@ -67,6 +67,177 @@ document.addEventListener("DOMContentLoaded", () => {
         if (message) message.textContent = text;
     }
 
+    
+    let trialCountdownTimer = null;
+
+    function renderAccessStatus(access) {
+        // Add the styles once.
+        if (!document.getElementById("dailyTrackAccessStyles")) {
+            const style = document.createElement("style");
+            style.id = "dailyTrackAccessStyles";
+            style.textContent = `
+                .dt-access-banner {
+                    padding: 14px 18px;
+                    margin-bottom: 22px;
+                    border-radius: 12px;
+                    background: #eff6ff;
+                    color: #1e40af;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                .dt-access-overlay {
+                    position: fixed;
+                    inset: 0;
+                    z-index: 9999;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                    background: rgba(15, 23, 42, 0.92);
+                }
+                .dt-access-card {
+                    width: 100%;
+                    max-width: 460px;
+                    padding: 32px 24px;
+                    border-radius: 18px;
+                    background: #fff;
+                    color: #111827;
+                    text-align: center;
+                }
+                .dt-access-card h2 {
+                    margin-bottom: 14px;
+                }
+                .dt-access-card p {
+                    margin-bottom: 18px;
+                    line-height: 1.6;
+                    color: #4b5563;
+                }
+                .dt-access-card button {
+                    padding: 12px 18px;
+                    margin: 5px;
+                    border: 0;
+                    border-radius: 9px;
+                    background: #2563eb;
+                    color: #fff;
+                    cursor: pointer;
+                }
+                .dt-access-card button.secondary {
+                    background: #e5e7eb;
+                    color: #111827;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        if (trialCountdownTimer) {
+            clearInterval(trialCountdownTimer);
+            trialCountdownTimer = null;
+        }
+
+        const main = document.querySelector(".main");
+        if (!main) throw new Error("DailyTrack dashboard was not found.");
+
+        let banner = document.getElementById("dailyTrackAccessBanner");
+
+        if (!banner) {
+            banner = document.createElement("div");
+            banner.id = "dailyTrackAccessBanner";
+            banner.className = "dt-access-banner";
+            main.prepend(banner);
+        }
+
+        const oldOverlay = document.getElementById("dailyTrackExpiredOverlay");
+        if (oldOverlay) oldOverlay.remove();
+
+        if (access.lifetime_access) {
+            banner.textContent = "✓ DailyTrack Lifetime Access";
+            return;
+        }
+
+        const endTime = new Date(access.trial_ends_at).getTime();
+
+        if (!Number.isFinite(endTime)) {
+            throw new Error("Your trial end date is invalid.");
+        }
+
+        function updateCountdown() {
+            const remaining = endTime - Date.now();
+
+            if (remaining <= 0) {
+                banner.textContent = "Your 7-day free trial has expired.";
+                if (trialCountdownTimer) {
+                    clearInterval(trialCountdownTimer);
+                    trialCountdownTimer = null;
+                }
+                showExpiredScreen();
+                return;
+            }
+
+            const days = Math.floor(remaining / 86400000);
+            const hours = Math.floor((remaining % 86400000) / 3600000);
+            const minutes = Math.floor((remaining % 3600000) / 60000);
+
+            banner.textContent =
+                `🎉 Free trial: ${days} days, ${hours} hours, ` +
+                `${minutes} minutes remaining.`;
+        }
+
+        function showExpiredScreen() {
+            if (document.getElementById("dailyTrackExpiredOverlay")) return;
+
+            const overlay = document.createElement("div");
+            overlay.id = "dailyTrackExpiredOverlay";
+            overlay.className = "dt-access-overlay";
+
+            overlay.innerHTML = `
+                <div class="dt-access-card">
+                    <h2>Your free trial has ended</h2>
+                    <p>
+                        Keep using DailyTrack with a one-time payment of
+                        <strong>KSh 699</strong> for lifetime access.
+                        No recurring subscription.
+                    </p>
+                    <p>
+                        Your saved routines, history, and goals remain
+                        in your account.
+                    </p>
+                    <button type="button" id="dtUpgradeButton" disabled>
+                        Payment setup coming next
+                    </button>
+                    <br>
+                    <button type="button" class="secondary" id="dtExpiredLogout">
+                        Log Out
+                    </button>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+
+            document.getElementById("dtExpiredLogout")
+                .addEventListener("click", async () => {
+                    const button = document.getElementById("dtExpiredLogout");
+                    button.disabled = true;
+
+                    try {
+                        await syncNow();
+                        const { error } = await client.auth.signOut();
+                        if (error) throw error;
+                    } catch (error) {
+                        console.error("Logout failed:", error);
+                        button.disabled = false;
+                        alert("Could not log out. Please try again.");
+                    }
+                });
+        }
+
+        updateCountdown();
+
+        if (endTime > Date.now()) {
+            trialCountdownTimer = setInterval(updateCountdown, 60000);
+        }
+    }
+
+
     function setMode(nextMode) {
         mode = nextMode;
 
@@ -193,6 +364,24 @@ document.addEventListener("DOMContentLoaded", () => {
         const userId = session.user.id;
 
         if (activeUserId === userId) return;
+        
+            // Load this account's trial or lifetime-access status.
+            const { data: accessData, error: accessError } = await client
+                .from("dailytrack_access")
+                .select("trial_ends_at, lifetime_access")
+                .eq("user_id", userId)
+                .maybeSingle();
+
+            if (accessError) throw accessError;
+
+            if (!accessData) {
+                throw new Error(
+                    "Your trial record was not found in Supabase."
+                );
+            }
+
+            renderAccessStatus(accessData);
+
 
         if (preparingUserId === userId) return;
 
