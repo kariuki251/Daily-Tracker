@@ -150,9 +150,15 @@ document.addEventListener("DOMContentLoaded", () => {
         if (oldOverlay) oldOverlay.remove();
 
         if (access.lifetime_access) {
-            banner.textContent = "✓ DailyTrack Lifetime Access";
-            return;
-        }
+    const app = document.querySelector(".app");
+
+    if (app) {
+        app.inert = false;
+    }
+
+    banner.textContent = "✓ DailyTrack Lifetime Access";
+    return;
+}
 
         const endTime = new Date(access.trial_ends_at).getTime();
 
@@ -184,6 +190,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
         function showExpiredScreen() {
             if (document.getElementById("dailyTrackExpiredOverlay")) return;
+
+            // Lock the dashboard when the free trial expires.
+const app = document.querySelector(".app");
+
+if (app) {
+    app.inert = true;
+}
 
             const overlay = document.createElement("div");
             overlay.id = "dailyTrackExpiredOverlay";
@@ -229,6 +242,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 });
         }
+
+        // Keep the dashboard available while the trial is active.
+const app = document.querySelector(".app");
+
+if (app && endTime > Date.now()) {
+    app.inert = false;
+}
 
         updateCountdown();
 
