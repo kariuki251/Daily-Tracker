@@ -23,6 +23,27 @@ document.addEventListener("DOMContentLoaded", () => {
     const signupTab = document.getElementById("signupTab");
     const forgotButton = document.getElementById("forgotPassword");
 
+    // Password recovery elements
+    const recoveryPanel = document.getElementById(
+        "passwordRecoveryPanel"
+    );
+
+    const recoveryForm = document.getElementById(
+        "passwordRecoveryForm"
+    );
+
+    const newPasswordInput = document.getElementById(
+        "newPassword"
+    );
+
+    const confirmNewPasswordInput = document.getElementById(
+        "confirmNewPassword"
+    );
+
+    const recoveryMessage = document.getElementById(
+        "passwordRecoveryMessage"
+    );
+
     let resolveReady;
 
     window.dailyTrackReady = new Promise(resolve => {
@@ -73,10 +94,177 @@ document.addEventListener("DOMContentLoaded", () => {
     let syncQueue = Promise.resolve();
     let trialCountdownTimer = null;
 
+    let recoveryMode = false;
+    let recoverySession = null;
+
     function showMessage(text) {
         if (message) {
             message.textContent = text;
         }
+    }
+
+    function showRecoveryMessage(text) {
+        if (recoveryMessage) {
+            recoveryMessage.textContent = text;
+        }
+    }
+
+    // --------------------------------------------------
+    // PASSWORD RECOVERY INTERFACE
+    // --------------------------------------------------
+
+    function showPasswordRecovery() {
+        if (
+            !recoveryPanel ||
+            !recoveryForm ||
+            !newPasswordInput ||
+            !confirmNewPasswordInput
+        ) {
+            showMessage(
+                "Password recovery form is missing. Please update your page HTML."
+            );
+            return false;
+        }
+
+        recoveryMode = true;
+
+        authForm.style.display = "none";
+        loginTab.style.display = "none";
+        signupTab.style.display = "none";
+        forgotButton.style.display = "none";
+
+        if (message) {
+            message.style.display = "none";
+        }
+
+        recoveryPanel.hidden = false;
+        recoveryPanel.style.display = "block";
+
+        showRecoveryMessage("");
+
+        return true;
+    }
+
+    function hidePasswordRecovery() {
+        recoveryMode = false;
+
+        if (recoveryPanel) {
+            recoveryPanel.hidden = true;
+            recoveryPanel.style.display = "none";
+        }
+
+        authForm.style.display = "";
+        loginTab.style.display = "";
+        signupTab.style.display = "";
+        forgotButton.style.display = "";
+
+        if (message) {
+            message.style.display = "";
+        }
+
+        showRecoveryMessage("");
+    }
+
+    if (recoveryPanel) {
+        recoveryPanel.hidden = true;
+        recoveryPanel.style.display = "none";
+    }
+
+    if (recoveryForm) {
+        recoveryForm.addEventListener(
+            "submit",
+            async event => {
+                event.preventDefault();
+
+                if (busy || !recoveryMode) {
+                    return;
+                }
+
+                const newPassword =
+                    newPasswordInput.value;
+
+                const confirmPassword =
+                    confirmNewPasswordInput.value;
+
+                if (newPassword.length < 8) {
+                    showRecoveryMessage(
+                        "Your password must be at least 8 characters."
+                    );
+                    return;
+                }
+
+                if (newPassword !== confirmPassword) {
+                    showRecoveryMessage(
+                        "The passwords do not match."
+                    );
+                    return;
+                }
+
+                if (!recoverySession) {
+                    showRecoveryMessage(
+                        "Your recovery session has expired. Request a new password reset email."
+                    );
+                    return;
+                }
+
+                const recoverySubmitButton =
+                    recoveryForm.querySelector(
+                        'button[type="submit"]'
+                    );
+
+                busy = true;
+
+                if (recoverySubmitButton) {
+                    recoverySubmitButton.disabled = true;
+                    recoverySubmitButton.textContent =
+                        "Updating password...";
+                }
+
+                showRecoveryMessage("");
+
+                try {
+                    const { error } =
+                        await client.auth.updateUser({
+                            password: newPassword
+                        });
+
+                    if (error) {
+                        throw error;
+                    }
+
+                    showRecoveryMessage(
+                        "Your password has been updated successfully. Loading your account..."
+                    );
+
+                    newPasswordInput.value = "";
+                    confirmNewPasswordInput.value = "";
+
+                    recoveryMode = false;
+
+                    await prepareUser(recoverySession);
+
+                } catch (error) {
+                    console.error(
+                        "Password update failed:",
+                        error
+                    );
+
+                    showRecoveryMessage(
+                        error.message ||
+                        "Could not update your password. Please try again."
+                    );
+
+                } finally {
+                    busy = false;
+
+                    if (recoverySubmitButton) {
+                        recoverySubmitButton.disabled = false;
+                        recoverySubmitButton.textContent =
+                            "Update Password";
+                    }
+                }
+            }
+        );
     }
 
     // --------------------------------------------------
@@ -479,7 +667,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const snapshot = readLocalData();
 
         syncQueue = syncQueue.then(async () => {
-            // Never upload one account's data into another account.
             if (activeUserId !== userId) {
                 return;
             }
@@ -512,7 +699,6 @@ document.addEventListener("DOMContentLoaded", () => {
         preparingUserId = userId;
 
         try {
-            // Get this account's access status.
             const { data: accessData, error: accessError } =
                 await client
                     .from("dailytrack_access")
@@ -532,7 +718,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             renderAccessStatus(accessData);
 
-            // Retrieve this user's cloud data.
             const { data: cloudData, error } = await client
                 .from("dailytrack_data")
                 .select("user_id, routines, history, goals")
@@ -544,7 +729,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             if (cloudData) {
-                // Existing cloud data always takes priority.
                 const userData = {
                     routines: Array.isArray(cloudData.routines)
                         ? cloudData.routines
@@ -570,7 +754,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 );
 
             } else {
-                // No cloud record exists for this account.
                 const previousOwner = localStorage.getItem(
                     KEYS.owner
                 );
@@ -578,11 +761,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 let initialData;
 
                 if (previousOwner === userId) {
-                    // This browser data belongs to this same user.
                     initialData = readLocalData();
                 } else {
-                    // New or unrecognized account:
-                    // Start with completely empty personal data.
                     initialData = {
                         routines: [],
                         history: {},
@@ -597,11 +777,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     userId
                 );
 
-                // Create this user's first cloud record.
                 await uploadData(userId, initialData);
             }
 
-            // Only activate the user after data has loaded.
             activeUserId = userId;
             window.dailyTrackUserId = userId;
 
@@ -613,7 +791,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             ready();
 
-            // Notify the app that the account's data is ready.
             window.dispatchEvent(
                 new CustomEvent("dailytrack-user-ready")
             );
@@ -633,7 +810,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --------------------------------------------------
-    // AUTHENTICATION EVENTS
+    // LOGIN AND SIGNUP
     // --------------------------------------------------
 
     loginTab.addEventListener("click", () => {
@@ -687,7 +864,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     );
                 } else {
                     showMessage(
-                        "Account created. Check your email to confirm your account, then log in."
+                        "Account created. You can now log in."
                     );
                 }
 
@@ -730,12 +907,20 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        forgotButton.disabled = true;
+        showMessage("Sending password reset email...");
+
         try {
+            const redirectUrl = new URL(
+                "./",
+                window.location.href
+            ).href;
+
             const { error } =
                 await client.auth.resetPasswordForEmail(
                     email,
                     {
-                        redirectTo: window.location.origin
+                        redirectTo: redirectUrl
                     }
                 );
 
@@ -744,7 +929,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             showMessage(
-                "If the account exists, a password reset email will be sent."
+                "If the account exists, a password reset email will be sent. Check your inbox."
             );
 
         } catch (error) {
@@ -752,6 +937,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 error.message ||
                 "Could not request a reset email."
             );
+
+        } finally {
+            forgotButton.disabled = false;
         }
     });
 
@@ -831,6 +1019,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
     client.auth.onAuthStateChange((event, session) => {
         setTimeout(() => {
+
+            // A recovery link creates a temporary authenticated
+            // session specifically for changing the password.
+            if (event === "PASSWORD_RECOVERY" && session) {
+                recoverySession = session;
+
+                showPasswordRecovery();
+
+                return;
+            }
+
+            // Ignore intermediate auth events while the user
+            // is completing the password recovery process.
+            if (recoveryMode) {
+                return;
+            }
+
             if (session) {
                 prepareUser(session);
                 return;
@@ -881,7 +1086,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
-        if (data.session) {
+        if (data.session && !recoveryMode) {
             prepareUser(data.session);
         }
 

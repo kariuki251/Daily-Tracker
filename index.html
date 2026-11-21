@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 
-<body class="auth required">
+<body class="auth-required">
 
     
 <section id="authScreen" class="auth-screen">
@@ -56,6 +56,40 @@
         </button>
 
         <p id="authMessage" role="status" aria-live="polite"></p>
+
+        <!-- PASSWORD RECOVERY -->
+<div id="passwordRecoveryPanel" hidden>
+    <h2>Set a New Password</h2>
+    <p>Enter your new password below.</p>
+
+    <form id="passwordRecoveryForm">
+        <label for="newPassword">New password</label>
+        <input
+            type="password"
+            id="newPassword"
+            placeholder="At least 8 characters"
+            minlength="8"
+            autocomplete="new-password"
+            required
+        >
+
+        <label for="confirmNewPassword">Confirm new password</label>
+        <input
+            type="password"
+            id="confirmNewPassword"
+            placeholder="Confirm your password"
+            minlength="8"
+            autocomplete="new-password"
+            required
+        >
+
+        <button type="submit" class="auth-submit">
+            Update Password
+        </button>
+    </form>
+
+    <p id="passwordRecoveryMessage" role="status" aria-live="polite"></p>
+</div>
     </div>
 </section>
 
