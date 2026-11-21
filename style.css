@@ -1527,3 +1527,28 @@ body.auth-required .backup-panel {
     inset: 0;
     z-index: 1000;
 }
+
+
+/* =====================================
+   PREVENT DASHBOARD FLASH BEFORE LOGIN
+===================================== */
+
+/* Hide the application until authentication succeeds */
+body.auth-required .app,
+body.auth-required .backup-panel {
+    display: none !important;
+}
+
+/* Show login screen immediately */
+body.auth-required .auth-screen {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    min-height: 100vh;
+}
+
+/* Prevent background scrolling while login is displayed */
+body.auth-required {
+    overflow: hidden;
+}
