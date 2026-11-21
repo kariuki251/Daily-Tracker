@@ -9,7 +9,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const KEYS = {
         routines: "dailyTrackRoutines",
         history: "dailyTrackHistory",
-        goals: "dailyTrackGoals"
+        goals: "dailyTrackGoals",
+        owner: "dailyTrackOwnerId"
     };
 
     const authScreen = document.getElementById("authScreen");
@@ -35,12 +36,22 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    if (!window.supabase || !authScreen || !authForm) {
-        document.body.classList.add("auth-required");
+    document.body.classList.add("auth-required");
 
+    if (
+        !window.supabase ||
+        !authScreen ||
+        !authForm ||
+        !emailInput ||
+        !passwordInput ||
+        !submitButton ||
+        !loginTab ||
+        !signupTab ||
+        !forgotButton
+    ) {
         if (message) {
             message.textContent =
-                "Authentication could not load. Check your connection.";
+                "Authentication could not load. Check your connection and page setup.";
         }
 
         ready();
@@ -60,21 +71,24 @@ document.addEventListener("DOMContentLoaded", () => {
     let preparingUserId = null;
     let syncTimer = null;
     let syncQueue = Promise.resolve();
-
-    document.body.classList.add("auth-required");
-
-    function showMessage(text) {
-        if (message) message.textContent = text;
-    }
-
-    
     let trialCountdownTimer = null;
 
+    function showMessage(text) {
+        if (message) {
+            message.textContent = text;
+        }
+    }
+
+    // --------------------------------------------------
+    // ACCESS STATUS AND FREE TRIAL
+    // --------------------------------------------------
+
     function renderAccessStatus(access) {
-        // Add the styles once.
         if (!document.getElementById("dailyTrackAccessStyles")) {
             const style = document.createElement("style");
+
             style.id = "dailyTrackAccessStyles";
+
             style.textContent = `
                 .dt-access-banner {
                     padding: 14px 18px;
@@ -85,6 +99,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     font-size: 14px;
                     font-weight: 600;
                 }
+
                 .dt-access-overlay {
                     position: fixed;
                     inset: 0;
@@ -95,6 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     padding: 20px;
                     background: rgba(15, 23, 42, 0.92);
                 }
+
                 .dt-access-card {
                     width: 100%;
                     max-width: 460px;
@@ -104,14 +120,17 @@ document.addEventListener("DOMContentLoaded", () => {
                     color: #111827;
                     text-align: center;
                 }
+
                 .dt-access-card h2 {
                     margin-bottom: 14px;
                 }
+
                 .dt-access-card p {
                     margin-bottom: 18px;
                     line-height: 1.6;
                     color: #4b5563;
                 }
+
                 .dt-access-card button {
                     padding: 12px 18px;
                     margin: 5px;
@@ -121,11 +140,18 @@ document.addEventListener("DOMContentLoaded", () => {
                     color: #fff;
                     cursor: pointer;
                 }
+
                 .dt-access-card button.secondary {
                     background: #e5e7eb;
                     color: #111827;
                 }
+
+                .dt-access-card button:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                }
             `;
+
             document.head.appendChild(style);
         }
 
@@ -135,90 +161,101 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         const main = document.querySelector(".main");
-        if (!main) throw new Error("DailyTrack dashboard was not found.");
 
-        let banner = document.getElementById("dailyTrackAccessBanner");
+        if (!main) {
+            throw new Error("DailyTrack dashboard was not found.");
+        }
+
+        let banner = document.getElementById(
+            "dailyTrackAccessBanner"
+        );
 
         if (!banner) {
             banner = document.createElement("div");
             banner.id = "dailyTrackAccessBanner";
             banner.className = "dt-access-banner";
+
             main.prepend(banner);
         }
 
-        const oldOverlay = document.getElementById("dailyTrackExpiredOverlay");
-        if (oldOverlay) oldOverlay.remove();
+        const oldOverlay = document.getElementById(
+            "dailyTrackExpiredOverlay"
+        );
+
+        if (oldOverlay) {
+            oldOverlay.remove();
+        }
+
+        const app = document.querySelector(".app");
 
         if (access.lifetime_access) {
-    const app = document.querySelector(".app");
+            if (app) {
+                app.inert = false;
+            }
 
-    if (app) {
-        app.inert = false;
-    }
+            banner.textContent =
+                "✓ DailyTrack Lifetime Access";
 
-    banner.textContent = "✓ DailyTrack Lifetime Access";
-    return;
-}
+            return;
+        }
 
-        const endTime = new Date(access.trial_ends_at).getTime();
+        const endTime = new Date(
+            access.trial_ends_at
+        ).getTime();
 
         if (!Number.isFinite(endTime)) {
             throw new Error("Your trial end date is invalid.");
         }
 
-        function updateCountdown() {
-            const remaining = endTime - Date.now();
-
-            if (remaining <= 0) {
-                banner.textContent = "Your 7-day free trial has expired.";
-                if (trialCountdownTimer) {
-                    clearInterval(trialCountdownTimer);
-                    trialCountdownTimer = null;
-                }
-                showExpiredScreen();
+        function showExpiredScreen() {
+            if (
+                document.getElementById(
+                    "dailyTrackExpiredOverlay"
+                )
+            ) {
                 return;
             }
 
-            const days = Math.floor(remaining / 86400000);
-            const hours = Math.floor((remaining % 86400000) / 3600000);
-            const minutes = Math.floor((remaining % 3600000) / 60000);
-
-            banner.textContent =
-                `🎉 Free trial: ${days} days, ${hours} hours, ` +
-                `${minutes} minutes remaining.`;
-        }
-
-        function showExpiredScreen() {
-            if (document.getElementById("dailyTrackExpiredOverlay")) return;
-
-            // Lock the dashboard when the free trial expires.
-const app = document.querySelector(".app");
-
-if (app) {
-    app.inert = true;
-}
+            if (app) {
+                app.inert = true;
+            }
 
             const overlay = document.createElement("div");
+
             overlay.id = "dailyTrackExpiredOverlay";
             overlay.className = "dt-access-overlay";
 
             overlay.innerHTML = `
                 <div class="dt-access-card">
                     <h2>Your free trial has ended</h2>
+
                     <p>
-                        Keep using DailyTrack with a one-time payment of
-                        <strong>KSh 699</strong> for lifetime access.
+                        Keep using DailyTrack with a one-time
+                        payment of <strong>KSh 699</strong>
+                        for lifetime access.
                         No recurring subscription.
                     </p>
+
                     <p>
-                        Your saved routines, history, and goals remain
-                        in your account.
+                        Your saved routines, history, and goals
+                        remain in your account.
                     </p>
-                    <button type="button" id="dtUpgradeButton" disabled>
+
+                    <button
+                        type="button"
+                        id="dtUpgradeButton"
+                        disabled
+                    >
                         Payment setup coming next
                     </button>
+
                     <br>
-                    <button type="button" class="secondary" id="dtExpiredLogout">
+
+                    <button
+                        type="button"
+                        class="secondary"
+                        id="dtExpiredLogout"
+                    >
                         Log Out
                     </button>
                 </div>
@@ -226,45 +263,100 @@ if (app) {
 
             document.body.appendChild(overlay);
 
-            document.getElementById("dtExpiredLogout")
-                .addEventListener("click", async () => {
-                    const button = document.getElementById("dtExpiredLogout");
+            document
+                .getElementById("dtExpiredLogout")
+                .addEventListener("click", async event => {
+                    const button = event.currentTarget;
+
                     button.disabled = true;
 
                     try {
                         await syncNow();
-                        const { error } = await client.auth.signOut();
-                        if (error) throw error;
+
+                        const { error } =
+                            await client.auth.signOut();
+
+                        if (error) {
+                            throw error;
+                        }
                     } catch (error) {
                         console.error("Logout failed:", error);
+
                         button.disabled = false;
-                        alert("Could not log out. Please try again.");
+
+                        alert(
+                            "Could not log out. Please try again."
+                        );
                     }
                 });
         }
 
-        // Keep the dashboard available while the trial is active.
-const app = document.querySelector(".app");
+        function updateCountdown() {
+            const remaining = endTime - Date.now();
 
-if (app && endTime > Date.now()) {
-    app.inert = false;
-}
+            if (remaining <= 0) {
+                banner.textContent =
+                    "Your 7-day free trial has expired.";
+
+                if (trialCountdownTimer) {
+                    clearInterval(trialCountdownTimer);
+                    trialCountdownTimer = null;
+                }
+
+                showExpiredScreen();
+
+                return;
+            }
+
+            const days = Math.floor(
+                remaining / 86400000
+            );
+
+            const hours = Math.floor(
+                (remaining % 86400000) / 3600000
+            );
+
+            const minutes = Math.floor(
+                (remaining % 3600000) / 60000
+            );
+
+            banner.textContent =
+                `🎉 Free trial: ${days} days, ` +
+                `${hours} hours, ${minutes} minutes remaining.`;
+        }
+
+        if (app && endTime > Date.now()) {
+            app.inert = false;
+        }
 
         updateCountdown();
 
         if (endTime > Date.now()) {
-            trialCountdownTimer = setInterval(updateCountdown, 60000);
+            trialCountdownTimer = setInterval(
+                updateCountdown,
+                60000
+            );
         }
     }
 
+    // --------------------------------------------------
+    // LOGIN AND SIGNUP INTERFACE
+    // --------------------------------------------------
 
     function setMode(nextMode) {
         mode = nextMode;
 
         const signingUp = mode === "signup";
 
-        loginTab.classList.toggle("active", !signingUp);
-        signupTab.classList.toggle("active", signingUp);
+        loginTab.classList.toggle(
+            "active",
+            !signingUp
+        );
+
+        signupTab.classList.toggle(
+            "active",
+            signingUp
+        );
 
         submitButton.textContent = signingUp
             ? "Create Account"
@@ -292,6 +384,10 @@ if (app && endTime > Date.now()) {
                 : "Log In";
     }
 
+    // --------------------------------------------------
+    // LOCAL DATA MANAGEMENT
+    // --------------------------------------------------
+
     function readLocalData() {
         function read(key, fallback) {
             try {
@@ -310,14 +406,20 @@ if (app && endTime > Date.now()) {
         const goals = read(KEYS.goals, []);
 
         return {
-            routines: Array.isArray(routines) ? routines : [],
+            routines: Array.isArray(routines)
+                ? routines
+                : [],
+
             history:
                 history &&
                 typeof history === "object" &&
                 !Array.isArray(history)
                     ? history
                     : {},
-            goals: Array.isArray(goals) ? goals : []
+
+            goals: Array.isArray(goals)
+                ? goals
+                : []
         };
     }
 
@@ -338,13 +440,16 @@ if (app && endTime > Date.now()) {
         );
     }
 
-    function hasLocalData(data) {
-        return (
-            data.routines.length > 0 ||
-            Object.keys(data.history).length > 0 ||
-            data.goals.length > 0
-        );
+    function clearLocalData() {
+        localStorage.removeItem(KEYS.routines);
+        localStorage.removeItem(KEYS.history);
+        localStorage.removeItem(KEYS.goals);
+        localStorage.removeItem(KEYS.owner);
     }
+
+    // --------------------------------------------------
+    // SUPABASE CLOUD STORAGE
+    // --------------------------------------------------
 
     async function uploadData(userId, data) {
         const { error } = await client
@@ -359,18 +464,25 @@ if (app && endTime > Date.now()) {
                 onConflict: "user_id"
             });
 
-        if (error) throw error;
+        if (error) {
+            throw error;
+        }
     }
 
     async function syncNow() {
         const userId = activeUserId;
 
-        if (!userId) return;
+        if (!userId) {
+            return;
+        }
 
         const snapshot = readLocalData();
 
         syncQueue = syncQueue.then(async () => {
-            if (activeUserId !== userId) return;
+            // Never upload one account's data into another account.
+            if (activeUserId !== userId) {
+                return;
+            }
 
             await uploadData(userId, snapshot);
         });
@@ -378,21 +490,39 @@ if (app && endTime > Date.now()) {
         return syncQueue;
     }
 
+    // --------------------------------------------------
+    // LOAD THE LOGGED-IN USER'S DATA
+    // --------------------------------------------------
+
     async function prepareUser(session) {
-        if (!session) return;
+        if (!session) {
+            return;
+        }
 
         const userId = session.user.id;
 
-        if (activeUserId === userId) return;
-        
-            // Load this account's trial or lifetime-access status.
-            const { data: accessData, error: accessError } = await client
-                .from("dailytrack_access")
-                .select("trial_ends_at, lifetime_access")
-                .eq("user_id", userId)
-                .maybeSingle();
+        if (activeUserId === userId) {
+            return;
+        }
 
-            if (accessError) throw accessError;
+        if (preparingUserId === userId) {
+            return;
+        }
+
+        preparingUserId = userId;
+
+        try {
+            // Get this account's access status.
+            const { data: accessData, error: accessError } =
+                await client
+                    .from("dailytrack_access")
+                    .select("trial_ends_at, lifetime_access")
+                    .eq("user_id", userId)
+                    .maybeSingle();
+
+            if (accessError) {
+                throw accessError;
+            }
 
             if (!accessData) {
                 throw new Error(
@@ -402,52 +532,97 @@ if (app && endTime > Date.now()) {
 
             renderAccessStatus(accessData);
 
-
-        if (preparingUserId === userId) return;
-
-        preparingUserId = userId;
-
-        try {
+            // Retrieve this user's cloud data.
             const { data: cloudData, error } = await client
                 .from("dailytrack_data")
                 .select("user_id, routines, history, goals")
                 .eq("user_id", userId)
                 .maybeSingle();
 
-            if (error) throw error;
+            if (error) {
+                throw error;
+            }
 
             if (cloudData) {
-                // An existing cloud record takes priority.
-                writeLocalData({
+                // Existing cloud data always takes priority.
+                const userData = {
                     routines: Array.isArray(cloudData.routines)
                         ? cloudData.routines
                         : [],
+
                     history:
                         cloudData.history &&
                         typeof cloudData.history === "object" &&
                         !Array.isArray(cloudData.history)
                             ? cloudData.history
                             : {},
+
                     goals: Array.isArray(cloudData.goals)
                         ? cloudData.goals
                         : []
-                });
-            } else {
-                // First login: preserve existing local test data.
-                const localData = readLocalData();
+                };
 
-                await uploadData(userId, localData);
+                writeLocalData(userData);
+
+                localStorage.setItem(
+                    KEYS.owner,
+                    userId
+                );
+
+            } else {
+                // No cloud record exists for this account.
+                const previousOwner = localStorage.getItem(
+                    KEYS.owner
+                );
+
+                let initialData;
+
+                if (previousOwner === userId) {
+                    // This browser data belongs to this same user.
+                    initialData = readLocalData();
+                } else {
+                    // New or unrecognized account:
+                    // Start with completely empty personal data.
+                    initialData = {
+                        routines: [],
+                        history: {},
+                        goals: []
+                    };
+                }
+
+                writeLocalData(initialData);
+
+                localStorage.setItem(
+                    KEYS.owner,
+                    userId
+                );
+
+                // Create this user's first cloud record.
+                await uploadData(userId, initialData);
             }
 
+            // Only activate the user after data has loaded.
             activeUserId = userId;
             window.dailyTrackUserId = userId;
 
             authScreen.setAttribute("hidden", "");
-            document.body.classList.remove("auth-required");
+
+            document.body.classList.remove(
+                "auth-required"
+            );
 
             ready();
+
+            // Notify the app that the account's data is ready.
+            window.dispatchEvent(
+                new CustomEvent("dailytrack-user-ready")
+            );
+
         } catch (error) {
-            console.error("DailyTrack cloud loading failed:", error);
+            console.error(
+                "DailyTrack cloud loading failed:",
+                error
+            );
 
             showMessage(
                 "Could not load cloud data. Check your connection and refresh the page."
@@ -457,16 +632,32 @@ if (app && endTime > Date.now()) {
         }
     }
 
-    loginTab.addEventListener("click", () => setMode("login"));
-    signupTab.addEventListener("click", () => setMode("signup"));
+    // --------------------------------------------------
+    // AUTHENTICATION EVENTS
+    // --------------------------------------------------
+
+    loginTab.addEventListener("click", () => {
+        setMode("login");
+    });
+
+    signupTab.addEventListener("click", () => {
+        setMode("signup");
+    });
 
     authForm.addEventListener("submit", async event => {
         event.preventDefault();
 
-        if (busy) return;
+        if (busy) {
+            return;
+        }
 
         const email = emailInput.value.trim();
         const password = passwordInput.value;
+
+        if (!email) {
+            showMessage("Enter your email address.");
+            return;
+        }
 
         if (password.length < 8) {
             showMessage(
@@ -480,72 +671,110 @@ if (app && endTime > Date.now()) {
 
         try {
             if (mode === "signup") {
-                const { data, error } = await client.auth.signUp({
-                    email,
-                    password
-                });
+                const { data, error } =
+                    await client.auth.signUp({
+                        email,
+                        password
+                    });
 
-                if (error) throw error;
+                if (error) {
+                    throw error;
+                }
 
                 if (data.session) {
-                    showMessage("Account created successfully.");
+                    showMessage(
+                        "Account created successfully."
+                    );
                 } else {
                     showMessage(
                         "Account created. Check your email to confirm your account, then log in."
                     );
                 }
-            } else {
-                const { error } = await client.auth.signInWithPassword({
-                    email,
-                    password
-                });
 
-                if (error) throw error;
+            } else {
+                const { error } =
+                    await client.auth.signInWithPassword({
+                        email,
+                        password
+                    });
+
+                if (error) {
+                    throw error;
+                }
             }
+
         } catch (error) {
-            showMessage(error.message || "Authentication failed.");
+            showMessage(
+                error.message || "Authentication failed."
+            );
+
         } finally {
             setBusy(false);
         }
     });
 
+    // --------------------------------------------------
+    // FORGOT PASSWORD
+    // --------------------------------------------------
+
     forgotButton.addEventListener("click", async () => {
         const email = emailInput.value.trim();
 
         if (!email) {
-            showMessage("Enter your email address first.");
+            showMessage(
+                "Enter your email address first."
+            );
+
             emailInput.focus();
+
             return;
         }
 
         try {
-            const { error } = await client.auth.resetPasswordForEmail(
-                email,
-                { redirectTo: window.location.origin }
-            );
+            const { error } =
+                await client.auth.resetPasswordForEmail(
+                    email,
+                    {
+                        redirectTo: window.location.origin
+                    }
+                );
 
-            if (error) throw error;
+            if (error) {
+                throw error;
+            }
 
             showMessage(
                 "If the account exists, a password reset email will be sent."
             );
+
         } catch (error) {
             showMessage(
-                error.message || "Could not request a reset email."
+                error.message ||
+                "Could not request a reset email."
             );
         }
     });
 
-    // Sync local changes to Supabase.
+    // --------------------------------------------------
+    // AUTOMATIC CLOUD SYNC
+    // --------------------------------------------------
+
     window.addEventListener("dailytrack-save", () => {
         clearTimeout(syncTimer);
 
         syncTimer = setTimeout(async () => {
             try {
                 await syncNow();
-                console.log("DailyTrack cloud sync successful.");
+
+                console.log(
+                    "DailyTrack cloud sync successful."
+                );
+
             } catch (error) {
-                console.error("Cloud sync failed:", error);
+                console.error(
+                    "Cloud sync failed:",
+                    error
+                );
 
                 showMessage(
                     "Saved on this device, but cloud sync failed. Check your connection."
@@ -554,11 +783,16 @@ if (app && endTime > Date.now()) {
         }, 500);
     });
 
+    // --------------------------------------------------
+    // LOGOUT BUTTON
+    // --------------------------------------------------
+
     const logoutButton = document.createElement("button");
 
     logoutButton.type = "button";
     logoutButton.id = "logoutButton";
     logoutButton.textContent = "Log Out";
+
     logoutButton.style.cssText =
         "position:fixed;right:16px;bottom:16px;z-index:1000;" +
         "padding:10px 14px;border:0;border-radius:8px;" +
@@ -566,6 +800,7 @@ if (app && endTime > Date.now()) {
 
     logoutButton.addEventListener("click", async () => {
         logoutButton.disabled = true;
+
         clearTimeout(syncTimer);
 
         try {
@@ -573,9 +808,10 @@ if (app && endTime > Date.now()) {
 
             const { error } = await client.auth.signOut();
 
-            if (error) throw error;
+            if (error) {
+                throw error;
+            }
 
-        // The auth-state listener handles cleanup and reload.
         } catch (error) {
             console.error("Logout failed:", error);
 
@@ -589,6 +825,10 @@ if (app && endTime > Date.now()) {
 
     document.body.appendChild(logoutButton);
 
+    // --------------------------------------------------
+    // AUTH STATE CHANGES
+    // --------------------------------------------------
+
     client.auth.onAuthStateChange((event, session) => {
         setTimeout(() => {
             if (session) {
@@ -599,30 +839,60 @@ if (app && endTime > Date.now()) {
             const hadUser = activeUserId !== null;
 
             activeUserId = null;
+            preparingUserId = null;
+
             window.dailyTrackUserId = null;
 
-            document.body.classList.add("auth-required");
+            document.body.classList.add(
+                "auth-required"
+            );
+
             authScreen.removeAttribute("hidden");
 
+            if (trialCountdownTimer) {
+                clearInterval(trialCountdownTimer);
+                trialCountdownTimer = null;
+            }
+
             if (hadUser) {
-                Object.values(KEYS).forEach(key => {
-                    localStorage.removeItem(key);
-                });
+                clearLocalData();
 
                 window.location.reload();
             }
+
         }, 0);
     });
 
+    // --------------------------------------------------
+    // CHECK EXISTING LOGIN SESSION
+    // --------------------------------------------------
+
     client.auth.getSession().then(({ data, error }) => {
         if (error) {
-            console.error("Session check failed:", error);
-            showMessage("Could not check your login. Refresh and try again.");
+            console.error(
+                "Session check failed:",
+                error
+            );
+
+            showMessage(
+                "Could not check your login. Refresh and try again."
+            );
+
             return;
         }
 
         if (data.session) {
             prepareUser(data.session);
         }
+
+    }).catch(error => {
+        console.error(
+            "Could not retrieve Supabase session:",
+            error
+        );
+
+        showMessage(
+            "Could not check your login. Refresh and try again."
+        );
     });
 });

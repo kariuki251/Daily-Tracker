@@ -1,8 +1,12 @@
 
-document.addEventListener("DOMContentLoaded",async () => {
-     await window.dailyTrackReady;
-    const $ = (selector) => document.querySelector(selector);
-    const $$ = (selector) => [...document.querySelectorAll(selector)];
+document.addEventListener("DOMContentLoaded", async () => {
+    await window.dailyTrackReady;
+
+    const $ = (selector, parent = document) =>
+        parent.querySelector(selector);
+
+    const $$ = (selector, parent = document) =>
+        [...parent.querySelectorAll(selector)];
 
     const addRoutineBtn = $("#addRoutineBtn");
     const closeModalBtn = $("#closeModal");
@@ -27,15 +31,63 @@ document.addEventListener("DOMContentLoaded",async () => {
         }
     }
 
+    function save(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+
+            if (window.dailyTrackUserId) {
+                window.dispatchEvent(new Event("dailytrack-save"));
+            }
+        } catch (error) {
+            console.error("DailyTrack could not save data:", error);
+        }
+    }
+
     let routines = load(STORAGE.routines, []);
     let history = load(STORAGE.history, {});
     let goals = load(STORAGE.goals, []);
 
     if (!Array.isArray(routines)) routines = [];
-    if (!history || typeof history !== "object" || Array.isArray(history)) history = {};
+    if (!history || typeof history !== "object" || Array.isArray(history)) {
+        history = {};
+    }
     if (!Array.isArray(goals)) goals = [];
 
+    function dateKey(date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function dateFromKey(key) {
+        const [year, month, day] = key.split("-").map(Number);
+        return new Date(year, month - 1, day);
+    }
+
+    // Older routines without a date are assigned today's date once.
+    // Existing routines with dates are left untouched.
+    let migratedRoutines = false;
+
+    routines = routines.map(routine => {
+        if (
+            typeof routine.date === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(routine.date)
+        ) {
+            return routine;
+        }
+
+        migratedRoutines = true;
+
+        return {
+            ...routine,
+            date: dateKey(new Date())
+        };
+    });
+
+    if (migratedRoutines) {
+        save(STORAGE.routines, routines);
+    }
+
     let selectedDate = dateKey(new Date());
+
     let displayedMonth = new Date(
         new Date().getFullYear(),
         new Date().getMonth(),
@@ -45,13 +97,8 @@ document.addEventListener("DOMContentLoaded",async () => {
     let activePage = "Dashboard";
     let pageView = null;
 
-    function dateKey(date) {
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    }
-
-    function dateFromKey(key) {
-        const [year, month, day] = key.split("-").map(Number);
-        return new Date(year, month - 1, day);
+    function routinesForDate(key) {
+        return routines.filter(routine => routine.date === key);
     }
 
     function escapeHTML(value) {
@@ -63,28 +110,6 @@ document.addEventListener("DOMContentLoaded",async () => {
             "'": "&#39;"
         })[character]);
     }
-
-    
-function save(key, value) {
-    try {
-        localStorage.setItem(key, JSON.stringify(value));
-
-        // Tell auth.js that DailyTrack data has changed.
-        // auth.js listens for this event and syncs the
-        // complete routines, history, and goals snapshot.
-        if (window.dailyTrackUserId) {
-            window.dispatchEvent(
-                new Event("dailytrack-save")
-            );
-        }
-    } catch (error) {
-        console.error(
-            "DailyTrack could not save data:",
-            error
-        );
-    }
-}
-
 
     function formatTime(time) {
         if (!time) return "No time set";
@@ -116,16 +141,22 @@ function save(key, value) {
             return day.some(id => String(id) === String(routine.id));
         }
 
-        if (day && typeof day === "object" &&
-            Object.prototype.hasOwnProperty.call(day, routine.id)) {
+        if (
+            day &&
+            typeof day === "object" &&
+            Object.prototype.hasOwnProperty.call(day, routine.id)
+        ) {
             return Boolean(day[routine.id]);
         }
 
-        // Support completion data saved by the original version.
-        return key === dateKey(new Date()) && routine.completed === true;
+        // Compatibility with the original completion property.
+        return routine.date === key && routine.completed === true;
     }
 
     function setCompletion(routine, key, completed) {
+        // A routine can only be completed on its own date.
+        if (routine.date !== key) return;
+
         if (!Array.isArray(history[key])) {
             const previous = history[key];
 
@@ -138,18 +169,20 @@ function save(key, value) {
             id => String(id) !== String(routine.id)
         );
 
-        if (completed) history[key].push(routine.id);
-
-        if (key === dateKey(new Date())) {
-            routine.completed = completed;
+        if (completed) {
+            history[key].push(routine.id);
         }
+
+        routine.completed = completed;
 
         save(STORAGE.history, history);
         save(STORAGE.routines, routines);
     }
 
     function completionCount(key) {
-        return routines.filter(routine => isCompleted(routine, key)).length;
+        return routinesForDate(key).filter(
+            routine => isCompleted(routine, key)
+        ).length;
     }
 
     function weeklyStats() {
@@ -160,8 +193,8 @@ function save(key, value) {
             date.setDate(today.getDate() - (6 - index));
 
             const key = dateKey(date);
+            const total = routinesForDate(key).length;
             const completed = completionCount(key);
-            const total = routines.length;
 
             return {
                 date,
@@ -171,16 +204,27 @@ function save(key, value) {
                 }),
                 completed,
                 total,
-                rate: total ? Math.round(completed / total * 100) : 0
+                rate: total
+                    ? Math.round(completed / total * 100)
+                    : 0
             };
         });
 
-        const possible = days.reduce((sum, day) => sum + day.total, 0);
-        const done = days.reduce((sum, day) => sum + day.completed, 0);
+        const possible = days.reduce(
+            (sum, day) => sum + day.total,
+            0
+        );
+
+        const done = days.reduce(
+            (sum, day) => sum + day.completed,
+            0
+        );
 
         return {
             days,
-            rate: possible ? Math.round(done / possible * 100) : 0
+            rate: possible
+                ? Math.round(done / possible * 100)
+                : 0
         };
     }
 
@@ -213,17 +257,24 @@ function save(key, value) {
         event.preventDefault();
 
         const name = routineName.value.trim();
-        if (!name) return routineName.focus();
+
+        if (!name) {
+            routineName.focus();
+            return;
+        }
+
+        const today = dateKey(new Date());
 
         routines.push({
             id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
             name,
             time: routineTime.value,
             completed: false,
-            date: dateKey(new Date())
+            date: today
         });
 
         save(STORAGE.routines, routines);
+
         renderRoutines();
         closeModal();
         refreshPage();
@@ -232,8 +283,12 @@ function save(key, value) {
     // ---------------- DASHBOARD ----------------
 
     function updateDashboard() {
-        const total = routines.length;
-        const completed = completionCount(dateKey(new Date()));
+        const today = dateKey(new Date());
+        const todayRoutines = routinesForDate(today);
+
+        const total = todayRoutines.length;
+        const completed = completionCount(today);
+
         const percentage = total
             ? Math.round(completed / total * 100)
             : 0;
@@ -279,14 +334,17 @@ function save(key, value) {
             let streak = 0;
             const date = new Date();
 
-            while (
-                routines.length &&
-                completionCount(dateKey(date)) === routines.length
-            ) {
+            while (streak < 3660) {
+                const key = dateKey(date);
+                const dayTotal = routinesForDate(key).length;
+
+                // A day without routines does not count as a completed day.
+                if (dayTotal === 0 || completionCount(key) !== dayTotal) {
+                    break;
+                }
+
                 streak++;
                 date.setDate(date.getDate() - 1);
-
-                if (streak > 3660) break;
             }
 
             $("#statStreak").textContent = `${streak} days`;
@@ -296,17 +354,23 @@ function save(key, value) {
     function renderRoutines() {
         routineList.replaceChildren();
 
-        if (routines.length === 0) {
+        const today = dateKey(new Date());
+        const todayRoutines = routinesForDate(today);
+
+        if (todayRoutines.length === 0) {
             const empty = document.createElement("p");
+
             empty.textContent =
-                "No routines yet. Click + Add Routine to get started.";
+                "No routines for today. Click + Add Routine to get started.";
+
             empty.style.padding = "20px";
             empty.style.color = "#777";
+
             routineList.appendChild(empty);
         }
 
-        routines.forEach(routine => {
-            const completed = isCompleted(routine);
+        todayRoutines.forEach(routine => {
+            const completed = isCompleted(routine, today);
 
             const card = document.createElement("div");
             card.className = "routine-card";
@@ -322,7 +386,9 @@ function save(key, value) {
             name.style.display = "block";
             name.style.overflowWrap = "anywhere";
 
-            if (completed) name.style.textDecoration = "line-through";
+            if (completed) {
+                name.style.textDecoration = "line-through";
+            }
 
             const time = document.createElement("small");
             time.textContent = formatTime(routine.time);
@@ -344,8 +410,8 @@ function save(key, value) {
             completeBtn.addEventListener("click", () => {
                 setCompletion(
                     routine,
-                    dateKey(new Date()),
-                    !isCompleted(routine)
+                    routine.date,
+                    !isCompleted(routine, routine.date)
                 );
 
                 renderRoutines();
@@ -366,7 +432,10 @@ function save(key, value) {
                         history[key] = history[key].filter(
                             id => String(id) !== String(routine.id)
                         );
-                    } else if (history[key] && typeof history[key] === "object") {
+                    } else if (
+                        history[key] &&
+                        typeof history[key] === "object"
+                    ) {
                         delete history[key][routine.id];
                     }
                 });
@@ -426,24 +495,24 @@ function save(key, value) {
                 if (!section) return;
 
                 section.style.display =
-                    dashboard || (routinesPage && selector === ".routine-section")
+                    dashboard ||
+                    (routinesPage && selector === ".routine-section")
                         ? ""
                         : "none";
             });
 
         const view = ensurePageView();
+
         view.style.display =
-            ["Calendar", "Analytics", "Goals"].includes(page) ? "block" : "none";
+            ["Calendar", "Analytics", "Goals"].includes(page)
+                ? "block"
+                : "none";
 
         if (page === "Calendar" || page === "Analytics" || page === "Goals") {
             renderPage(page);
         }
 
-        if (page === "Dashboard") {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        } else {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        }
+        window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     $$(".nav-item").forEach(item => {
@@ -453,7 +522,11 @@ function save(key, value) {
             const text = item.textContent.trim().toLowerCase();
 
             const page = [
-                "dashboard", "routines", "calendar", "analytics", "goals"
+                "dashboard",
+                "routines",
+                "calendar",
+                "analytics",
+                "goals"
             ].find(name => text.includes(name));
 
             if (page) {
@@ -504,6 +577,7 @@ function save(key, value) {
             date.setDate(start.getDate() + i);
 
             const key = dateKey(date);
+            const dayRoutines = routinesForDate(key);
             const done = completionCount(key);
 
             const classes = [
@@ -511,32 +585,37 @@ function save(key, value) {
                 date.getMonth() !== displayedMonth.getMonth() ? "outside" : "",
                 key === dateKey(new Date()) ? "today" : "",
                 key === selectedDate ? "selected" : "",
+                dayRoutines.length ? "has-routines" : "",
                 done ? "has-completions" : ""
             ].filter(Boolean).join(" ");
 
             cells += `
                 <button type="button" class="${classes}" data-date="${key}">
                     <span class="dt-day-number">${date.getDate()}</span>
-                    ${done ? '<span class="dt-day-dot"></span>' : ""}
+                    ${dayRoutines.length ? '<span class="dt-day-dot"></span>' : ""}
                 </button>`;
         }
 
-        const details = routines.length
-            ? routines.map(routine => {
+        const selectedRoutines = routinesForDate(selectedDate);
+
+        const details = selectedRoutines.length
+            ? selectedRoutines.map(routine => {
                 const done = isCompleted(routine, selectedDate);
 
                 return `
                     <div class="dt-routine-line">
                         <div>
                             <strong>${escapeHTML(routine.name)}</strong>
-                            <div class="dt-muted">${escapeHTML(formatTime(routine.time))}</div>
+                            <div class="dt-muted">
+                                ${escapeHTML(formatTime(routine.time))}
+                            </div>
                         </div>
                         <span class="${done ? "dt-status" : "dt-muted"}">
                             ${done ? "✓ Completed" : "Not completed"}
                         </span>
                     </div>`;
             }).join("")
-            : '<p class="dt-empty">No routines have been added yet.</p>';
+            : '<p class="dt-empty">No routines were added on this date.</p>';
 
         view.innerHTML = `
             <div class="dt-page-heading">
@@ -548,7 +627,8 @@ function save(key, value) {
                 <div class="dt-calendar-toolbar">
                     <button class="dt-button secondary" data-month="-1">‹</button>
                     <h2>${displayedMonth.toLocaleDateString(undefined, {
-                        month: "long", year: "numeric"
+                        month: "long",
+                        year: "numeric"
                     })}</h2>
                     <button class="dt-button secondary" data-month="1">›</button>
                 </div>
@@ -557,7 +637,10 @@ function save(key, value) {
 
                 <div class="dt-day-detail">
                     <h2>${escapeHTML(formatDate(dateFromKey(selectedDate)))}</h2>
-                    <p>${completionCount(selectedDate)} of ${routines.length} routines completed</p>
+                    <p>
+                        ${completionCount(selectedDate)} of
+                        ${selectedRoutines.length} routines completed
+                    </p>
                     ${details}
                 </div>
             </div>`;
@@ -574,6 +657,7 @@ function save(key, value) {
                 displayedMonth.setMonth(
                     displayedMonth.getMonth() + Number(button.dataset.month)
                 );
+
                 renderCalendar(view);
             });
         });
@@ -584,9 +668,17 @@ function save(key, value) {
     function renderAnalytics(view) {
         const { days, rate } = weeklyStats();
 
-        const todayRate = routines.length
-            ? Math.round(completionCount(dateKey(new Date())) / routines.length * 100)
+        const today = dateKey(new Date());
+        const todayTotal = routinesForDate(today).length;
+
+        const todayRate = todayTotal
+            ? Math.round(completionCount(today) / todayTotal * 100)
             : 0;
+
+        const weeklyTotal = days.reduce(
+            (sum, day) => sum + day.total,
+            0
+        );
 
         const bars = days.map(day => `
             <div class="dt-chart-column">
@@ -600,9 +692,13 @@ function save(key, value) {
 
         const breakdown = [...days].reverse().map(day => `
             <div class="dt-analytics-line">
-                <span>${escapeHTML(day.date.toLocaleDateString(undefined, {
-                    weekday: "long", month: "short", day: "numeric"
-                }))}</span>
+                <span>
+                    ${escapeHTML(day.date.toLocaleDateString(undefined, {
+                        weekday: "long",
+                        month: "short",
+                        day: "numeric"
+                    }))}
+                </span>
                 <strong>${day.completed}/${day.total} · ${day.rate}%</strong>
             </div>
         `).join("");
@@ -615,19 +711,24 @@ function save(key, value) {
 
             <div class="dt-page-stats">
                 <div class="dt-page-stat">
-                    <span>Today's completion</span><strong>${todayRate}%</strong>
+                    <span>Today's completion</span>
+                    <strong>${todayRate}%</strong>
                 </div>
                 <div class="dt-page-stat">
-                    <span>7-day completion</span><strong>${rate}%</strong>
+                    <span>7-day completion</span>
+                    <strong>${rate}%</strong>
                 </div>
                 <div class="dt-page-stat">
-                    <span>Total routines</span><strong>${routines.length}</strong>
+                    <span>Tasks this week</span>
+                    <strong>${weeklyTotal}</strong>
                 </div>
             </div>
 
             <div class="dt-page-card">
                 <h2>Weekly consistency</h2>
-                <p class="dt-muted">Percentage of routines completed each day.</p>
+                <p class="dt-muted">
+                    Percentage of routines completed each day.
+                </p>
                 <div class="dt-chart">${bars}</div>
             </div>
 
@@ -658,22 +759,28 @@ function save(key, value) {
                                     : "No target date"}
                             </p>
                             <div class="dt-progress-track">
-                                <div class="dt-progress-fill" style="width:${progress}%"></div>
+                                <div class="dt-progress-fill"
+                                    style="width:${progress}%"></div>
                             </div>
                             <p class="dt-muted">
-                                ${goal.completed ? "Completed" : `${progress}% complete`}
+                                ${goal.completed
+                                    ? "Completed"
+                                    : `${progress}% complete`}
                             </p>
                         </div>
 
                         <div class="dt-goal-actions">
                             ${goal.completed ? "" : `
                                 <button class="dt-button secondary"
-                                    data-action="progress" data-id="${escapeHTML(goal.id)}">+10%</button>
+                                    data-action="progress"
+                                    data-id="${escapeHTML(goal.id)}">+10%</button>
                                 <button class="dt-button"
-                                    data-action="complete" data-id="${escapeHTML(goal.id)}">Finish</button>
+                                    data-action="complete"
+                                    data-id="${escapeHTML(goal.id)}">Finish</button>
                             `}
                             <button class="dt-button danger"
-                                data-action="delete" data-id="${escapeHTML(goal.id)}">Delete</button>
+                                data-action="delete"
+                                data-id="${escapeHTML(goal.id)}">Delete</button>
                         </div>
                     </div>`;
             }).join("")
@@ -686,9 +793,18 @@ function save(key, value) {
             </div>
 
             <div class="dt-page-stats">
-                <div class="dt-page-stat"><span>Total goals</span><strong>${goals.length}</strong></div>
-                <div class="dt-page-stat"><span>Completed</span><strong>${completedGoals}</strong></div>
-                <div class="dt-page-stat"><span>In progress</span><strong>${goals.length - completedGoals}</strong></div>
+                <div class="dt-page-stat">
+                    <span>Total goals</span>
+                    <strong>${goals.length}</strong>
+                </div>
+                <div class="dt-page-stat">
+                    <span>Completed</span>
+                    <strong>${completedGoals}</strong>
+                </div>
+                <div class="dt-page-stat">
+                    <span>In progress</span>
+                    <strong>${goals.length - completedGoals}</strong>
+                </div>
             </div>
 
             <div class="dt-page-card">
@@ -737,13 +853,19 @@ function save(key, value) {
                 const action = button.dataset.action;
 
                 if (action === "delete") {
-                    goals = goals.filter(goal => String(goal.id) !== String(id));
+                    goals = goals.filter(
+                        goal => String(goal.id) !== String(id)
+                    );
                 } else {
                     goals = goals.map(goal => {
                         if (String(goal.id) !== String(id)) return goal;
 
                         if (action === "complete") {
-                            return { ...goal, progress: 100, completed: true };
+                            return {
+                                ...goal,
+                                progress: 100,
+                                completed: true
+                            };
                         }
 
                         const progress = Math.min(
@@ -778,6 +900,8 @@ function save(key, value) {
     renderRoutines();
     closeModal();
 });
+
+
 /* ========================================
    DAILYTRACK DATA BACKUP
 ======================================== */
@@ -925,7 +1049,6 @@ function save(key, value) {
 
             if (!confirmed) return;
 
-            // Save current values so we can roll back if storage fails.
             const previous = {};
 
             for (const key of KEYS) {
@@ -956,6 +1079,13 @@ function save(key, value) {
                 }
 
                 throw error;
+            }
+
+            // Sync the imported backup to this logged-in user's cloud data.
+            window.dispatchEvent(new Event("dailytrack-save"));
+
+            if (window.dailyTrackSyncNow) {
+                await window.dailyTrackSyncNow();
             }
 
             showMessage("Backup restored. Reloading DailyTrack...");
